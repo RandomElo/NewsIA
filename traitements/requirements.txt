@@ -1,0 +1,14 @@
+requests
+urllib3
+feedparser
+beautifulsoup4
+newspaper3k
+playwright
+stealth-requests
+tiktoken
+lxml_html_clean
+python-dotenv
+psycopg2-binary
+hdbscan
+scikit-learn
+transformers

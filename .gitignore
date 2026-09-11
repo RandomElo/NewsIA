@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+venv/
+
+bdd.sqlite
+.env
+node_modules/
+
+contenu_traitements.txt
+storage/
+.lgd-nfy0
+litellm/config.yaml

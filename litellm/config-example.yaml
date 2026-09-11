@@ -1,0 +1,19 @@
+litellm_settings:
+  drop_params: true
+
+model_list:
+  - model_name: gpt-5.4-nano
+    litellm_params:
+      model: openai/gpt-5.4-nano
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: voyage-4
+    litellm_params:
+      model: voyage/voyage-4
+      api_key: os.environ/VOYAGE_API_KEY
+    model_info:
+      mode: embedding
+
+general_settings:
+  master_key: "__VOTRE_MASTER_KEY__"
+  database_url: os.environ/DATABASE_URL
+  store_prompts_in_spend_logs: true

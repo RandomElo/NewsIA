@@ -1,0 +1,69 @@
+services:
+
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: news-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    mem_limit: 300m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: news-litellm
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    env_file: .env
+    ports:
+      - "4000:4000"
+    restart: unless-stopped
+    mem_limit: 400m
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: news-api
+    env_file: .env
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      litellm:
+        condition: service_started
+    restart: unless-stopped
+    mem_limit: 250m
+
+  traitements:
+    build:
+      context: .
+      dockerfile: traitements/Dockerfile
+    container_name: news-traitements
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      litellm:
+        condition: service_started
+    restart: unless-stopped
+    # Pas de volume sur storage/browser-profile : le profil Chromium ne doit
+    # persister que pendant la vie du conteneur, pas au-delà (cf. demande).
+    shm_size: "512mb"   # Chromium a besoin de plus de /dev/shm que le défaut Docker
+    mem_limit: 700m     # marge pour le pic Chromium pendant les runs cron
+
+volumes:
+  db_data:

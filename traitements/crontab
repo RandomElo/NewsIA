@@ -1,0 +1,9 @@
+SHELL=/bin/bash
+# Les variables d'env Docker sont réinjectées par entrypoint.sh dans /etc/environment,
+# que cron charge automatiquement pour chaque job.
+
+# Collecte RSS toutes les 3h, à HH:01 (00:01, 03:01, 06:01, 09:01, 12:01, 15:01, 18:01, 21:01)
+1 0,3,6,9,12,15,18,21 * * * root cd /app && xvfb-run -a python -m traitements.rss.collecte >> /var/log/cron.log 2>&1
+
+# Traitement principal (clustering, résumés) chaque jour à 23h50
+50 23 * * * root cd /app && python -m traitements.main >> /var/log/cron.log 2>&1
