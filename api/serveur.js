@@ -1,7 +1,6 @@
-import e, { raw } from "express"
+import e from "express"
 import dotenv from "dotenv";
 import { Article, Resume, Cluster, ClusterArticle } from "./bdd/bdd.js";
-import path from "path"
 import { Op } from "sequelize"
 dotenv.config();
 

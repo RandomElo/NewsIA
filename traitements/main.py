@@ -7,6 +7,10 @@ from traitements.llm.resumeFinal import resumer_tous_les_clusters, resumer_clust
 from traitements.bdd.enregistrementResumes import enregistrement_resumes
 from traitements.bdd.rechercheVectorielle import recuperer_articles_zonebourse_du_jour
 
+from datetime import datetime
+
+def log(msg: str) -> None:
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
 
 def recuperer_articles_bdd() -> list[dict]:
     conn = get_connection()
@@ -58,44 +62,33 @@ def construire_cluster_force_zonebourse(articles: list[dict]) -> dict | None:
 
 
 if __name__ == "__main__":
+    log("===== TRAITEMENT =====")
 
-    # ── 2. Récupération de tous les articles RSS ───────────────────
-    print("[*] === Étape 2 : Récupération articles ===")
     articles_rss = recuperer_articles_bdd()
-    print(f"[*] {len(articles_rss)} articles en BDD à analyser")
+    log(f"{len(articles_rss)} articles récupérés")
 
-    # ── 3. Clustering & analyse ────────────────────────────────────────────────
-    print("[*] === Étape 3 : Clustering ===")
     clusters = clusturiser_titres(articles_rss)
-    analyse  = analyser_clusters(clusters)
+    log("Appel ChatGPT (choix des clusters)")
+    analyse = analyser_clusters(clusters)
 
-    # ── 4. Sélection des articles à télécharger ────────────────────────────────
     urls_selectionnees = set()
     for topic in analyse["clusters"]:
         for cid in topic["cluster_ids"]:
             for article in clusters.get(int(cid), []):
                 urls_selectionnees.add(article["lien"])
 
-    print(f"[*] Téléchargement de {len(urls_selectionnees)}/{len(articles_rss)} articles sélectionnés")
-
-    # ── 5. Téléchargement & enregistrement ────────────────────────────────────
     telecharger_et_enregistrer(articles_rss, urls_selectionnees)
 
-    # ── 6. RAG + résumés ──────────────────────────────────────────────────────
     rag_resultats = rag_pour_tous_les_clusters(analyse)
-    resumes       = resumer_tous_les_clusters(rag_resultats)
+    log(f"Rédaction de {len(rag_resultats)} articles")
+    resumes = resumer_tous_les_clusters(rag_resultats)
+    log("Enregistrement en BDD")
 
-    # ── 7. Cluster forcé ZoneBourse — indépendant du clustering GPT ────────────
-    print("[*] === Étape 7 : Cluster forcé ZoneBourse ===")
     articles_zb = recuperer_articles_zonebourse_du_jour()
-    cluster_zb  = construire_cluster_force_zonebourse(articles_zb)
-
+    cluster_zb = construire_cluster_force_zonebourse(articles_zb)
     if cluster_zb:
         resume_zb = resumer_cluster(cluster_zb)
         if resume_zb:
             enregistrement_resumes([resume_zb])
-            print(f"[+] Cluster forcé ZoneBourse résumé ({len(articles_zb)} articles)")
-    else:
-        print("[~] Aucun article ZoneBourse aujourd'hui — cluster forcé ignoré")
 
     nettoyer_articles_non_traites()

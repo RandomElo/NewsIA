@@ -409,6 +409,15 @@ s'inquiéter du temps de build à chaque petite modif.
 
 ---
 
+## Application mobile — React Native
+
+Une app **React Native** consomme l'API (`news-api`, port `8100`) pour permettre la lecture des
+résumés et des sources sur mobile.
+
+<img src="./apercu_app.jpg" alt="Screenshot de l'app NewsIA" width="300">
+
+⚠️ Non fourni dans le dépôt
+
 ## Historique — lancement sans Docker (déprécié)
 
 Avant la dockerisation, le pipeline était lancé directement sur l'hôte via deux scripts CRON

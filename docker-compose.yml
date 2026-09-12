@@ -39,7 +39,7 @@ services:
     container_name: news-api
     env_file: .env
     ports:
-      - "3000:3000"
+      - "8100:8100"
     depends_on:
       db:
         condition: service_healthy
