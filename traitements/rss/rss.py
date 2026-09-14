@@ -528,7 +528,6 @@ def _recuperer_titres_flux(elements: list[dict]) -> list[dict]:
         except Exception:
             continue
         
-        print(f"[~] {element.get('source', '?')} → {len(flux.entries)} entrées")
         source = element.get("source") or (urlparse(element["lien"]).hostname or element["lien"])
 
         for entree in flux.entries:

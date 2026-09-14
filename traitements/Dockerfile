@@ -22,6 +22,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
+RUN ln -s /usr/local/bin/python /usr/bin/python
+
 # Dépendances Python
 COPY traitements/requirements.txt ./traitements/requirements.txt
 RUN pip install --no-cache-dir -r traitements/requirements.txt
