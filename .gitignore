@@ -11,3 +11,44 @@ storage/
 .lgd-nfy0
 litellm/config.yaml
 contenuProjet.py
+
+# Secrets
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+.venv/
+env/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+dist/
+build/
+coverage/
+.vite/
+*.log
+npm-debug.log*
+
+# Bases locales
+*.sqlite
+*.sqlite3
+*.db
+
+# Captures de debug Playwright (ZoneBourse)
+debug_timeout.png
+debug_timeout.html
+
+# Éditeurs et système
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Rapports d'audit et configuration Claude
+audits/
+.claude/

@@ -21,7 +21,7 @@ app.get("/resumes/:date", async (req, res) => {
                 },
             },
             order: [["date_resume", "DESC"]],
-            attributes: ["titre", "resume", "date_resume", "cluster_id_fk"],
+            attributes: ["titre", "resume", "date_resume", "cluster_id_fk", "prix"],
         });
 
         if (!resumes.length) return res.json([]);
@@ -66,7 +66,7 @@ app.get("/resumes/:date", async (req, res) => {
                     .map(id => ({ lienArticle: articleMap.get(id)?.url, nom: articleMap.get(id).titre }))
                     .filter(Boolean);
 
-                return { titre: resume.titre, resume: resume.resume, sources };
+                return { titre: resume.titre, resume: resume.resume, prix: resume.prix, sources };
             });
 
         res.json(tableauRetour);

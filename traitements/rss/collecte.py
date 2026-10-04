@@ -1,24 +1,17 @@
 from traitements.rss.rss import recuperer_articles_du_jour
 from traitements.bdd.connexion import get_connection
 from traitements.bdd.communs import embedder_textes
-
-from datetime import datetime
-
-def log(msg: str) -> None:
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+from traitements.journal import log
 
 if __name__ == "__main__":
-    log("===== COLLECTE =====")
 
     articles_rss = recuperer_articles_du_jour()
     articles_sans_contenu = [a for a in articles_rss if not a.get("contenu")]
     articles_avec_contenu = [a for a in articles_rss if a.get("contenu")]
 
-    log(f"{len(articles_rss)} articles récupérés")
-
     article_zb = next((a for a in articles_avec_contenu if a["source"].startswith("ZoneBourse")), None)
-    if article_zb:
-        log(f"Article ZoneBourse : {article_zb['titre']}")
+    etat_zb = f"'{article_zb['titre'][:70]}'" if article_zb else "aucun article du jour"
+    log.info(f"Collecte : {len(articles_sans_contenu)} articles RSS, ZoneBourse {etat_zb}")
 
     conn = get_connection()
     cursor = conn.cursor()

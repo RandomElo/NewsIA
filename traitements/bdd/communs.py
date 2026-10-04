@@ -1,11 +1,5 @@
-import os
-import requests
-from dotenv import load_dotenv
+from traitements.llm.client import appeler_litellm
 
-load_dotenv()
-
-LITELLM_URL = os.getenv("LITELLM_PROXY_URL")
-LITELLM_API_KEY = os.getenv("LITELLM_API_KEY")
 EMBEDDING_MODEL = "voyage/voyage-4"
 MAX_TOKENS = 32000
 
@@ -18,13 +12,8 @@ def count_tokens(text: str) -> int:
 def bulk_embed(texts: list[str]) -> list[list[float]]:
     """Embed une liste de textes en une seule requête."""
     assert len(texts) <= 1000, "Maximum 1000 textes par batch"
-    response = requests.post(
-        f"{LITELLM_URL}/embeddings",
-        headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
-        json={"model": EMBEDDING_MODEL, "input": texts}
-    )
-    response.raise_for_status()
-    return [item["embedding"] for item in response.json()["data"]]
+    reponse = appeler_litellm("embeddings", {"model": EMBEDDING_MODEL, "input": texts})
+    return [item["embedding"] for item in reponse["data"]]
 
 
 def dispatch_batches(texts: list[str]) -> list[list[int]]:

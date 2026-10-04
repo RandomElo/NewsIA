@@ -16,7 +16,6 @@ Installation :
 import hashlib
 import json
 import os
-import logging
 import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -33,16 +32,9 @@ import requests
 
 from playwright.sync_api import sync_playwright
 
+from traitements.journal import log
+
 MODE = "dev"  # dev ou production
-
-# ── Journalisation ────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger(__name__)
-
 
 # ── Chargement de la configuration RSS ───────────────────────────────────────
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
@@ -85,6 +77,15 @@ _SELECTEUR_TITRE_UNE_ZB            = ".txt-s8.px-15.mt-15.txt-align-center.my-0"
 _PROFIL_ZB = Path("./storage/browser-profile")
 
 
+def _date_publication_zonebourse(html: str) -> Optional[datetime]:
+    """Date de la balise <meta property="article:published_time"> de la page article."""
+    meta = BeautifulSoup(html, "html.parser").find("meta", property="article:published_time")
+    try:
+        return datetime.fromisoformat(meta["content"]) if meta else None
+    except ValueError:
+        return None
+
+
 def _nettoyer_verrous_profil(profil_dir: Path) -> None:
     """
     Supprime les fichiers de verrou Chromium pouvant rester après un
@@ -97,7 +98,7 @@ def _nettoyer_verrous_profil(profil_dir: Path) -> None:
         try:
             if f.exists() or f.is_symlink():
                 f.unlink()
-                log.info("[*] ZoneBourse — verrou %s supprimé", nom)
+                log.debug("[*] ZoneBourse — verrou %s supprimé", nom)
         except Exception as e:
             log.warning("[!] ZoneBourse — impossible de supprimer %s : %s", nom, e)
 
@@ -119,7 +120,7 @@ def _gerer_captcha_cloudflare(page) -> None:
             )
             if checkbox:
                 checkbox.click()
-                log.info("[*] ZoneBourse — clic captcha effectué")
+                log.debug("[*] ZoneBourse — clic captcha effectué")
         else:
             captcha_btn = page.query_selector(
                 "button:has-text('Accepter & Fermer'), "
@@ -128,9 +129,9 @@ def _gerer_captcha_cloudflare(page) -> None:
             )
             if captcha_btn:
                 captcha_btn.click()
-                log.info("[*] ZoneBourse — clic bouton de vérification effectué")
+                log.debug("[*] ZoneBourse — clic bouton de vérification effectué")
     except Exception:
-        log.info("[*] ZoneBourse — aucun captcha Cloudflare réactif détecté")
+        log.debug("[*] ZoneBourse — aucun captcha Cloudflare réactif détecté")
 
 
 def _recuperer_article_principal_zonebourse() -> Optional[dict]:
@@ -164,106 +165,118 @@ def _recuperer_article_principal_zonebourse() -> Optional[dict]:
                 ],
             )
 
-            page = contexte.pages[0] if contexte.pages else contexte.new_page()
-
-            # Bloque images/fonts/médias pour accélérer le chargement sur un Pi
-            page.route(
-                "**/*",
-                lambda route: (
-                    route.abort()
-                    if route.request.resource_type in ("image", "font", "media")
-                    else route.continue_()
-                ),
-            )
-
-            log.info("[*] ZoneBourse — chargement page d'accueil")
             try:
-                page.goto(ZONEBOURSE_URL, wait_until="commit", timeout=90_000)
-            except Exception:
+                page = contexte.pages[0] if contexte.pages else contexte.new_page()
+
+                # Bloque images/fonts/médias pour accélérer le chargement sur un Pi
+                page.route(
+                    "**/*",
+                    lambda route: (
+                        route.abort()
+                        if route.request.resource_type in ("image", "font", "media")
+                        else route.continue_()
+                    ),
+                )
+
+                log.debug("[*] ZoneBourse — chargement page d'accueil")
                 try:
-                    page.screenshot(path="debug_timeout.png", full_page=True)
-                    Path("debug_timeout.html").write_text(page.content(), encoding="utf-8")
-                    log.error(
-                        "[!] ZoneBourse — timeout au chargement, capture dans "
-                        "'debug_timeout.png' / 'debug_timeout.html'"
+                    page.goto(ZONEBOURSE_URL, wait_until="commit", timeout=90_000)
+                except Exception:
+                    try:
+                        page.screenshot(path="debug_timeout.png", full_page=True)
+                        Path("debug_timeout.html").write_text(page.content(), encoding="utf-8")
+                        log.error(
+                            "[!] ZoneBourse — timeout au chargement, capture dans "
+                            "'debug_timeout.png' / 'debug_timeout.html'"
+                        )
+                    except Exception:
+                        log.error("[!] ZoneBourse — timeout au chargement, capture impossible")
+                    raise
+
+                # Ne pas bloquer sur domcontentloaded si la page reste "active"
+                # en arrière-plan (trackers, websockets) alors que le DOM visible
+                # est déjà prêt. On tente, mais on continue en cas de timeout.
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=15_000)
+                except Exception:
+                    log.debug("[*] ZoneBourse — domcontentloaded non atteint, on continue (contenu probablement déjà présent)")
+
+                # 1. Gestion Cloudflare (reprise de la version JS)
+                log.debug("[*] ZoneBourse — vérification captcha Cloudflare")
+                _gerer_captcha_cloudflare(page)
+
+                # 2. Gestion de la bannière cookie Didomi
+                try:
+                    bouton_cookie = page.wait_for_selector(
+                        _SELECTEUR_COOKIE_ZB, state="visible", timeout=10_000
+                    )
+                    if bouton_cookie:
+                        bouton_cookie.click(force=True)
+                        log.debug("[*] ZoneBourse — cookies acceptés")
+                except Exception:
+                    log.debug("[*] ZoneBourse — aucune bannière cookie détectée")
+
+                # 3. Détection de l'article principal
+                try:
+                    main_article = page.wait_for_selector(
+                        _SELECTEUR_ARTICLE_PRINCIPAL_ZB, timeout=15_000
                     )
                 except Exception:
-                    log.error("[!] ZoneBourse — timeout au chargement, capture impossible")
-                raise
+                    log.warning("[!] ZoneBourse — article principal introuvable")
+                    return None
 
-            # Ne pas bloquer sur domcontentloaded si la page reste "active"
-            # en arrière-plan (trackers, websockets) alors que le DOM visible
-            # est déjà prêt. On tente, mais on continue en cas de timeout.
-            try:
-                page.wait_for_load_state("domcontentloaded", timeout=15_000)
-            except Exception:
-                log.info("[*] ZoneBourse — domcontentloaded non atteint, on continue (contenu probablement déjà présent)")
+                if not main_article:
+                    log.warning("[!] ZoneBourse — aucun article trouvé")
+                    return None
 
-            # 1. Gestion Cloudflare (reprise de la version JS)
-            log.info("[*] ZoneBourse — vérification captcha Cloudflare")
-            _gerer_captcha_cloudflare(page)
+                # Titre de secours pris sur le bloc de la home, au cas où le sélecteur
+                # dédié serait absent sur la page article
+                titre_fallback = main_article.inner_text().strip().split("\n")[0]
 
-            # 2. Gestion de la bannière cookie Didomi
-            try:
-                bouton_cookie = page.wait_for_selector(
-                    _SELECTEUR_COOKIE_ZB, state="visible", timeout=10_000
-                )
-                if bouton_cookie:
-                    bouton_cookie.click(force=True)
-                    log.info("[*] ZoneBourse — cookies acceptés")
-            except Exception:
-                log.info("[*] ZoneBourse — aucune bannière cookie détectée")
+                # 4. Navigation vers la page d'article
+                main_article.click()
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=20_000)
+                except Exception:
+                    log.debug("[*] ZoneBourse — domcontentloaded non atteint après clic, on continue")
 
-            # 3. Détection de l'article principal
-            try:
-                main_article = page.wait_for_selector(
-                    _SELECTEUR_ARTICLE_PRINCIPAL_ZB, timeout=15_000
-                )
-            except Exception:
-                log.warning("[!] ZoneBourse — article principal introuvable")
-                return None
+                # Petite pause pour laisser le temps au contenu de se stabiliser
+                page.wait_for_timeout(1_500)
 
-            if not main_article:
-                log.warning("[!] ZoneBourse — aucun article trouvé")
-                return None
+                # Titre "propre" pris sur la page d'article elle-même
+                try:
+                    titre_el = page.wait_for_selector(_SELECTEUR_TITRE_UNE_ZB, timeout=8_000)
+                    titre = titre_el.inner_text().strip() if titre_el else titre_fallback
+                except Exception:
+                    titre = titre_fallback
 
-            # Titre de secours pris sur le bloc de la home, au cas où le sélecteur
-            # dédié serait absent sur la page article
-            titre_fallback = main_article.inner_text().strip().split("\n")[0]
-
-            # 4. Navigation vers la page d'article
-            main_article.click()
-            try:
-                page.wait_for_load_state("domcontentloaded", timeout=20_000)
-            except Exception:
-                log.info("[*] ZoneBourse — domcontentloaded non atteint après clic, on continue")
-
-            # Petite pause pour laisser le temps au contenu de se stabiliser
-            page.wait_for_timeout(1_500)
-
-            # Titre "propre" pris sur la page d'article elle-même
-            try:
-                titre_el = page.wait_for_selector(_SELECTEUR_TITRE_UNE_ZB, timeout=8_000)
-                titre = titre_el.inner_text().strip() if titre_el else titre_fallback
-            except Exception:
-                titre = titre_fallback
-
-            lien = page.url
-            html = page.content()
+                lien = page.url
+                html = page.content()
+            finally:
+                # Fermeture tant que Playwright tourne encore : sinon les handlers de
+                # page.route() sont coupés en plein vol (CancelledError / TargetClosedError)
+                try:
+                    contexte.unroute_all(behavior="ignoreErrors")
+                    for p_ouverte in contexte.pages:
+                        p_ouverte.unroute_all(behavior="ignoreErrors")
+                    contexte.close()
+                    log.debug("[*] ZoneBourse — contexte fermé proprement")
+                except Exception:
+                    pass
 
     except Exception as e:
         log.error("[!] ZoneBourse — échec récupération article principal : %s", e)
         return None
 
-    finally:
-        if contexte is not None:
-            try:
-                contexte.close()
-                log.info("[*] ZoneBourse — contexte fermé proprement")
-            except Exception:
-                pass
-
     if not html or not lien:
+        return None
+
+    # Le matin, le week-end ou un jour férié, la une est encore l'article de la veille
+    # au soir : on ne garde que les articles publiés aujourd'hui, sinon ils sont
+    # comptés dans le résumé du jour.
+    date_pub = _date_publication_zonebourse(html)
+    if date_pub and date_pub.astimezone().date() < datetime.now().date():
+        log.debug("[*] ZoneBourse — une du %s ignorée (pas du jour)", date_pub.strftime("%d/%m %H:%M"))
         return None
 
     contenu = _extraire_texte(lien, html)
@@ -271,14 +284,12 @@ def _recuperer_article_principal_zonebourse() -> Optional[dict]:
         log.warning("[!] ZoneBourse — contenu vide après extraction")
         return None
 
-    log.info("[+] ZoneBourse — article principal récupéré : '%s'", titre[:80])
-
     return {
         "titre":       titre,
         "lien":        lien,
         "source":      "ZoneBourse - Une",
         "description": "",
-        "date_pub":    datetime.now(timezone.utc).isoformat(),
+        "date_pub":    (date_pub or datetime.now(timezone.utc)).isoformat(),
         "contenu":     contenu,
     }
 
@@ -303,7 +314,7 @@ _DOMAINES_BLOQUES_IP = {"zonebourse.com"}
 def _obtenir_navigateur():
     if not getattr(_donnees_thread, "navigateur", None):
         from playwright.sync_api import sync_playwright
-        _donnees_thread.pw         = sync_playwright().__enter__()
+        _donnees_thread.pw        = sync_playwright().__enter__()
         _donnees_thread.navigateur = _donnees_thread.pw.chromium.launch(
             headless=True,
             args=["--no-sandbox", "--disable-setuid-sandbox",
@@ -497,25 +508,13 @@ def _enregistrer_stat(url: str, succes: bool, raison: str = "") -> None:
 
 
 def _afficher_rapport() -> None:
-    if not _stats_domaines:
-        return
-    lignes = []
-    for domaine, s in sorted(_stats_domaines.items(), key=lambda x: (-x[1]["err"], -x[1]["ok"])):
-        ok, err = s["ok"], s["err"]
-        total = ok + err
-        taux  = f"{100 * ok // total}%" if total else "—"
-        raisons_str = ""
-        if s["raisons"]:
-            top = sorted(s["raisons"].items(), key=lambda x: -x[1])[:2]
-            raisons_str = "  ← " + " | ".join(f"{r} ({n}×)" for r, n in top)
-        lignes.append(f"  {domaine:<42} {ok:>4} ✔  {err:>4} ✘  ({taux}){raisons_str}")
-    sep = "─" * 74
-    print(f"\n{sep}")
-    print(f"  {'DOMAINE':<42} {'OK':>4}    {'ERR':>4}    TAUX")
-    print(sep)
-    for ligne in lignes:
-        print(ligne)
-    print(sep)
+    """Une seule ligne listant les domaines en échec (les domaines sans erreur sont omis)."""
+    echecs = sorted(
+        ((d, s["ok"], s["err"]) for d, s in _stats_domaines.items() if s["err"]),
+        key=lambda x: -x[2],
+    )
+    if echecs:
+        log.info("Échecs par domaine : " + ", ".join(f"{d} {err}/{ok + err}" for d, ok, err in echecs))
 
 
 # ── Phase 1 : récupération des titres RSS ────────────────────────────────────
@@ -596,11 +595,6 @@ def recuperer_articles_du_jour() -> list[dict]:
     with ThreadPoolExecutor(max_workers=5) as executor:
         futurs = {executor.submit(_recuperer_titres_flux, flux): "rss" for flux in ALL_FLUX}
         futurs[executor.submit(_recuperer_article_principal_zonebourse)] = "zonebourse"
-        
-        # Soumission temporaire de ZoneBourse uniquement
-        # futurs = {
-        #     executor.submit(_recuperer_article_principal_zonebourse): "zonebourse"
-        # }
 
         for futur in as_completed(futurs):
             type_tache = futurs[futur]
@@ -614,7 +608,6 @@ def recuperer_articles_du_jour() -> list[dict]:
             except Exception as e:
                 log.error("Erreur récupération flux (%s) : %s", type_tache, e)
 
-    log.info("[+] %d articles RSS récupérés", len(tous))
     return tous
 
 # ── Phase 2 : téléchargement des articles sélectionnés ───────────────────────
@@ -687,7 +680,6 @@ def telecharger_et_enregistrer(
     from traitements.bdd.enregistrementArticle import ajouter_articles_batch
 
     a_telecharger = [a for a in articles if a["lien"] in urls_selectionnees]
-    log.info("[*] Téléchargement de %d articles...", len(a_telecharger))
 
     cache_partage: dict = {}
     articles_ok = []
@@ -702,7 +694,7 @@ def telecharger_et_enregistrer(
             if resultat:
                 articles_ok.append(resultat)
 
-    log.info("[+] %d/%d articles téléchargés avec succès", len(articles_ok), len(a_telecharger))
+    log.info(f"Téléchargement : {len(articles_ok)}/{len(a_telecharger)} articles récupérés")
     _afficher_rapport()
 
     return ajouter_articles_batch(articles_ok)

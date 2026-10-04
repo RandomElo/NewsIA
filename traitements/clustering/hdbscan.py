@@ -1,5 +1,6 @@
 import numpy as np
 from sklearn.cluster import HDBSCAN
+from traitements.journal import log
 from traitements.bdd.communs import embedder_textes
 from traitements.bdd.connexion import get_connection
 
@@ -21,9 +22,8 @@ def _sauvegarder_embeddings_titres(articles: list[dict], embeddings: list[list[f
             donnees,
         )
         conn.commit()
-        print(f"[+] {cursor.rowcount} embedding_titre sauvegardés")
     except Exception as e:
-        print(f"[!] Erreur sauvegarde embedding_titre : {e}")
+        log.error(f"[!] Erreur sauvegarde embedding_titre : {e}")
         conn.rollback()
     finally:
         cursor.close()
@@ -42,8 +42,6 @@ def clusturiser_titres(articles: list[dict]) -> dict[int, list[dict]]:
     if not articles:
         return {}
 
-    print(f"[*] Clustering de {len(articles)} titres...")
-
     titres = [a["titre"] for a in articles]
     embeddings = embedder_textes(titres)
 
@@ -53,13 +51,14 @@ def clusturiser_titres(articles: list[dict]) -> dict[int, list[dict]]:
         min_cluster_size=4,
         min_samples=2,
         metric="euclidean",
-        cluster_selection_method="leaf"
+        cluster_selection_method="leaf",
+        copy=False,  # valeur actuelle explicitée pour faire taire le FutureWarning de sklearn
     )
     labels = clusterer.fit_predict(np.array(embeddings))
 
     nb_clusters = len(set(labels)) - (1 if -1 in labels else 0)
     nb_bruit = list(labels).count(-1)
-    print(f"[+] {nb_clusters} clusters trouvés, {nb_bruit} articles ignorés (bruit)")
+    log.info(f"Clustering : {nb_clusters} clusters, {nb_bruit} articles isolés ignorés")
 
     clusters = {}
     for article, label in zip(articles, labels):

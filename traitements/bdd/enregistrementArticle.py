@@ -1,5 +1,6 @@
 from traitements.bdd.connexion import get_connection
 from traitements.bdd.communs import embedder_textes
+from traitements.journal import log
 
 
 def ajouter_articles_batch(articles: list[dict]) -> list[int]:
@@ -29,10 +30,9 @@ def ajouter_articles_batch(articles: list[dict]) -> list[int]:
                 ids.append(row[0])
 
         conn.commit()
-        print(f"[+] {len(ids)}/{len(articles)} articles mis à jour")
         return ids
     except Exception as e:
-        print(f"[!] Erreur update batch : {e}")
+        log.error(f"[!] Erreur update batch : {e}")
         conn.rollback()
         return []
     finally:

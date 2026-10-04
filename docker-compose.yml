@@ -30,7 +30,9 @@ services:
     ports:
       - "4000:4000"
     restart: unless-stopped
-    mem_limit: 400m
+    # 400m ne suffisait pas : LiteLLM a été tué par l'OOM killer pendant l'appel
+    # "choix des clusters" (gros prompt de ~750 titres) le 03/10 à 23:50
+    mem_limit: 700m
 
   api:
     build:

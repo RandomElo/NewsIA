@@ -1,19 +1,17 @@
 from traitements.bdd.communs import generer_embedding
 from traitements.bdd.rechercheVectorielle import rechercher_articles_similaires
+from traitements.journal import log
 
 def rag_pour_cluster(topic: dict) -> dict:
     titre     = topic["title"]
     questions = topic["questions"]
     topic_id  = topic["id"]
 
-    print(f"[*] RAG topic {topic_id} — '{titre}' ({len(questions)} questions)")
-
     ids_vus          = set()
     articles_uniques = []
 
     # ── Recherche vectorielle normale ──────────────────────────────────────────
-    for i, question in enumerate(questions):
-        print(f"  [{i+1}/{len(questions)}] {question[:80]}...")
+    for question in questions:
         embedding = generer_embedding(question)
         resultats = rechercher_articles_similaires(embedding)
         for article in resultats:
@@ -22,8 +20,6 @@ def rag_pour_cluster(topic: dict) -> dict:
                 articles_uniques.append(article)
 
     articles_uniques.sort(key=lambda a: a["score"], reverse=True)
-
-    print(f"  [+] {len(articles_uniques)} articles uniques trouvés")
 
     return {
         "cluster_id": topic_id,
@@ -45,5 +41,5 @@ def rag_pour_tous_les_clusters(analyse: dict) -> list[dict]:
 
         resultats.append(rag_pour_cluster(topic))
 
-    print(f"[+] RAG terminé — {len(resultats)} topics traités")
+    log.info(f"RAG : {len(resultats)} sujets, {sum(len(r['articles']) for r in resultats)} articles trouvés")
     return resultats

@@ -1,12 +1,8 @@
-import os
 import requests
-from dotenv import load_dotenv
 from traitements.bdd.enregistrementResumes import enregistrement_resumes
 from traitements.bdd.enregistrementCluster import enregistrer_cluster
-load_dotenv()
-
-LITELLM_URL = os.getenv("LITELLM_PROXY_URL")
-LITELLM_API_KEY = os.getenv("LITELLM_API_KEY")
+from traitements.llm.client import appeler_chat
+from traitements.journal import log
 
 MODEL = "openai/gpt-5.4-nano"
 EFFORTS = "low"
@@ -42,26 +38,22 @@ def formater_contexte(articles: list[dict]) -> str:
 def resumer_cluster(cluster_rag: dict) -> dict | None:
     """
     Prend un cluster RAG { cluster_id, titre, questions, articles }
-    et retourne { cluster_id, titre, resume, cluster_id_fk }.
+    et retourne { cluster_id, titre, resume, cluster_id_fk, prix }.
+    prix : coût en dollars de l'appel GPT qui a rédigé le résumé.
     """
     cluster_id = cluster_rag["cluster_id"]
     titre = cluster_rag["titre"]
     articles = cluster_rag["articles"]
 
     if not articles:
-        print(f"  [~] Cluster {cluster_id} — pas d'articles, ignoré")
+        log.warning(f"[!] Résumé '{titre}' : aucun article, ignoré")
         return None
 
     # Filtre unique : les articles peu pertinents sont écartés à la fois
     # du contexte envoyé au LLM et de la liaison enregistrée en BDD.
     articles_pertinents = [a for a in articles if a.get("score", 1) >= SCORE_MIN]
     if not articles_pertinents:
-        print(f"  [~] Cluster {cluster_id} — aucun article au-dessus du seuil, on garde le meilleur quand même")
         articles_pertinents = [max(articles, key=lambda a: a.get("score", 0))]
-
-    print(f"[*] Résumé cluster {cluster_id} — '{titre}' ({len(articles_pertinents)}/{len(articles)} articles retenus)")
-
-    cluster_id_fk = enregistrer_cluster(cluster_id, titre, articles_pertinents)
 
     contexte = formater_contexte(articles_pertinents)
     prompt_user = f"""Sujet : {titre}
@@ -69,43 +61,51 @@ def resumer_cluster(cluster_rag: dict) -> dict | None:
 Articles :
 {contexte}"""
 
-    response = requests.post(
-        f"{LITELLM_URL}/chat/completions",
-        headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
-        json={
-            "model": MODEL,
-            "reasoning_effort": EFFORTS,
-            "verbosity": "low",
-            "messages": [
-                {"role": "system", "content": INSTRUCTION},
-                {"role": "user", "content": prompt_user}
-            ]
-        }
-    )
-    response.raise_for_status()
+    resume, cout = appeler_chat({
+        "model": MODEL,
+        "reasoning_effort": EFFORTS,
+        "verbosity": "low",
+        "messages": [
+            {"role": "system", "content": INSTRUCTION},
+            {"role": "user", "content": prompt_user}
+        ]
+    })
 
-    resume = response.json()["choices"][0]["message"]["content"].strip()
-    print(f"  [+] {len(resume)} caractères générés")
+    resume = resume.strip()
+    log.info(f"Résumé '{titre[:70]}' : {len(articles_pertinents)}/{len(articles)} articles, {cout:.4f} $")
+
+    # Enregistré seulement une fois le résumé obtenu, pour ne pas laisser de cluster orphelin en BDD
+    cluster_id_fk = enregistrer_cluster(cluster_id, titre, articles_pertinents)
 
     return {
         "cluster_id": cluster_id,
         "titre": titre,
         "resume": resume,
         "cluster_id_fk": cluster_id_fk,
+        "prix": cout,
     }
 
 
-def resumer_tous_les_clusters(rag_resultats: list[dict]) -> list[dict]:
+def resumer_tous_les_clusters(rag_resultats: list[dict], cout_analyse: float = 0) -> list[dict]:
     """
     Prend tous les résultats RAG et génère un résumé pour chaque cluster.
     Retourne la liste dans l'ordre d'importance (celui du RAG).
+    cout_analyse : coût de l'appel GPT de choix des clusters, réparti à parts égales
+    sur les résumés pour que la somme des prix corresponde au coût réel de la journée.
     """
     resultats = []
     for cluster_rag in rag_resultats:
-        resume = resumer_cluster(cluster_rag)
+        # Un cluster en échec (même après les retries) ne doit pas faire perdre les autres
+        try:
+            resume = resumer_cluster(cluster_rag)
+        except requests.RequestException as e:
+            log.error(f"[!] Résumé '{cluster_rag['titre']}' impossible : {e}")
+            continue
         if resume:
             resultats.append(resume)
 
-    print(f"[+] {len(resultats)} résumés générés")
+    for resume in resultats:
+        resume["prix"] += cout_analyse / len(resultats)
+
     enregistrement_resumes(resultats)
     return resultats

@@ -33,6 +33,11 @@ export default function (bdd) {
             allowNull: true,
             defaultValue: DataTypes.NOW,
         },
+        // Coût en dollars des appels GPT ayant produit ce résumé (embeddings Voyage exclus)
+        prix: {
+            type: DataTypes.DOUBLE,
+            allowNull: true,
+        },
     }, {
         tableName: "resumes",
         timestamps: false,

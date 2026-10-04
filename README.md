@@ -134,6 +134,10 @@ Script autonome déclenché toutes les 3h par le CRON.
 Parse tous les flux RSS et insère les articles (titre, url, source) en BDD sans télécharger le contenu.
 Les articles sont insérés avec `contenu = NULL` et `embedding = NULL` — ils seront complétés par `main.py`.
 
+L'article « à la une » de ZoneBourse n'est gardé que s'il a été publié le jour même (balise
+`article:published_time` de la page). Le matin, le week-end ou un jour férié, la une est encore l'article
+de la veille au soir, qui se retrouvait sinon dans le résumé du jour.
+
 ### `rss/rss.py`
 
 Expose deux fonctions publiques correspondant aux deux premières phases du pipeline.
@@ -294,6 +298,15 @@ Clé primaire composite `(cluster_id, article_id)`. Cascade sur suppression du c
 | `titre`         | `TEXT`    | Titre du cluster         |
 | `resume`        | `TEXT`    | Résumé généré par GPT    |
 | `cluster_id_fk` | `INTEGER` | FK → `clusters(id)`      |
+| `prix`          | `DOUBLE PRECISION` | Coût en dollars des appels GPT du résumé (voir plus bas) |
+
+`prix` vient de l'en-tête `x-litellm-response-cost` renvoyé par LiteLLM. Il contient l'appel GPT de rédaction
+plus une part égale de l'appel GPT de choix des clusters, si bien que la somme des `prix` d'une journée donne
+son coût GPT réel. Les embeddings Voyage ne sont pas comptés (quota gratuit), même si LiteLLM leur attribue
+un coût dans ses propres statistiques. La colonne a été ajoutée le 04/10/2026 (`ALTER TABLE resumes ADD COLUMN prix
+double precision`) ; les résumés antérieurs ont `prix = NULL`.
+
+L'API renvoie ce champ : `GET /resumes/:date` → `[{ titre, resume, prix, sources }]`.
 
 ---
 
@@ -337,6 +350,11 @@ planification (`traitements/crontab`, fuseau `Europe/Paris`) :
 
 Les logs des jobs sont redirigés vers `/var/log/cron.log` dans le conteneur, et remontent dans
 `docker logs news-traitements` grâce à l'entrypoint (`tail -f`).
+
+Format des logs (module `traitements/journal.py`) : une ligne par étape, `[jj/mm hh:mm:ss] message`.
+Une collecte tient en une ligne, un traitement en une quinzaine (clustering, sujets retenus, une ligne par
+résumé avec son coût, total de la journée). Les étapes détaillées du scraping ZoneBourse sont en niveau
+`DEBUG` (masquées) ; les avertissements et erreurs restent affichés.
 
 ### Démarrer / arrêter le stack
 

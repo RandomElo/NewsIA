@@ -1,4 +1,5 @@
 from traitements.bdd.connexion import get_connection
+from traitements.journal import log
 
 
 def enregistrer_cluster(topic_id: str, titre: str, articles: list[dict]) -> int | None:
@@ -12,7 +13,6 @@ def enregistrer_cluster(topic_id: str, titre: str, articles: list[dict]) -> int 
     Retourne l'id du cluster inséré, ou None en cas d'erreur.
     """
     if not articles:
-        print(f"  [~] Cluster {topic_id} — pas d'articles, non enregistré")
         return None
 
     conn = get_connection()
@@ -32,11 +32,10 @@ def enregistrer_cluster(topic_id: str, titre: str, articles: list[dict]) -> int 
             )
 
         conn.commit()
-        print(f"[+] Cluster {topic_id} enregistré (id={cluster_id}, {len(ids_articles)} articles)")
         return cluster_id
 
     except Exception as e:
-        print(f"[!] Erreur enregistrement cluster {topic_id} : {e}")
+        log.error(f"[!] Erreur enregistrement cluster {topic_id} : {e}")
         conn.rollback()
         return None
     finally:
