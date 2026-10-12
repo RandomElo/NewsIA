@@ -34,7 +34,7 @@ from playwright.sync_api import sync_playwright
 
 from traitements.journal import log
 
-MODE = "dev"  # dev ou production
+MODE = "production"  # production : articles publiés depuis la veille 06:01 UTC ; dev : uniquement ceux de la veille
 
 # ── Chargement de la configuration RSS ───────────────────────────────────────
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
@@ -294,7 +294,13 @@ def _recuperer_article_principal_zonebourse() -> Optional[dict]:
     }
 
 # ── Playwright ────────────────────────────────────────────────────────────────
-_donnees_thread = threading.local()
+# Un Chromium monte à ~300 Mo sur une page d'actualité : un seul à la fois, fermé dès la
+# page récupérée (pic mesuré : 411 Mo avec 1 navigateur, 634 Mo avec 2). Avant, chaque
+# thread gardait le sien ouvert jusqu'à la fin du processus, et 5 navigateurs faisaient
+# dépasser la limite mémoire du conteneur (traitement de 23h50 tué par l'OOM killer les
+# 07/10 et 08/10). Playwright n'est qu'un secours quand le téléchargement HTTP échoue.
+_NAVIGATEURS_SIMULTANES = threading.BoundedSemaphore(1)
+_RESSOURCES_IGNOREES = {"image", "media", "font"}
 
 _DOMAINES_CHARGEMENT_RAPIDE = {
     "boursedirect.fr", "boursorama.com", "fr.investing.com",
@@ -311,25 +317,26 @@ _SELECTEURS_PAR_DOMAINE: dict[str, list[str]] = {
 _DOMAINES_BLOQUES_IP = {"zonebourse.com"}
 
 
-def _obtenir_navigateur():
-    if not getattr(_donnees_thread, "navigateur", None):
-        from playwright.sync_api import sync_playwright
-        _donnees_thread.pw        = sync_playwright().__enter__()
-        _donnees_thread.navigateur = _donnees_thread.pw.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox",
-                  "--disable-blink-features=AutomationControlled"],
-        )
-    return _donnees_thread.navigateur
-
-
 def _strategie_attente(url: str) -> str:
     hote = (urlparse(url).hostname or "").removeprefix("www.")
     return "domcontentloaded" if any(hote.endswith(d) for d in _DOMAINES_CHARGEMENT_RAPIDE) else "networkidle"
 
 
 def telecharger_avec_playwright(url: str, timeout_ms: int = 35_000) -> str:
-    navigateur = _obtenir_navigateur()
+    with _NAVIGATEURS_SIMULTANES, sync_playwright() as pw:
+        navigateur = pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox",
+                  "--disable-blink-features=AutomationControlled",
+                  "--disable-gpu", "--disable-extensions"],
+        )
+        try:
+            return _charger_page(navigateur, url, timeout_ms)
+        finally:
+            navigateur.close()
+
+
+def _charger_page(navigateur, url: str, timeout_ms: int) -> str:
     contexte = navigateur.new_context(
         user_agent=(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -342,6 +349,9 @@ def telecharger_avec_playwright(url: str, timeout_ms: int = 35_000) -> str:
             "Referer": "https://www.google.com/",
         },
     )
+    # Seul le HTML est lu : ne pas charger images, vidéos et polices divise la mémoire de Chromium
+    contexte.route("**/*", lambda route: route.abort()
+                   if route.request.resource_type in _RESSOURCES_IGNOREES else route.continue_())
     try:
         page = contexte.new_page()
         page.add_init_script("""

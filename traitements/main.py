@@ -86,7 +86,7 @@ if __name__ == "__main__":
     telecharger_et_enregistrer(articles_rss, urls_selectionnees)
 
     rag_resultats = rag_pour_tous_les_clusters(analyse)
-    resumes = resumer_tous_les_clusters(rag_resultats, analyse["cout"])
+    resumes = resumer_tous_les_clusters(rag_resultats, analyse["cout"], len(articles_rss))
 
     articles_zb = recuperer_articles_zonebourse_du_jour()
     cluster_zb = construire_cluster_force_zonebourse(articles_zb)
@@ -97,6 +97,7 @@ if __name__ == "__main__":
             log.error(f"[!] Résumé ZoneBourse impossible : {e}")
             resume_zb = None
         if resume_zb:
+            resume_zb["nb_articles_rss"] = len(articles_rss)
             enregistrement_resumes([resume_zb])
             resumes.append(resume_zb)
 

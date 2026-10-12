@@ -38,6 +38,11 @@ export default function (bdd) {
             type: DataTypes.DOUBLE,
             allowNull: true,
         },
+        // Nombre d'articles RSS collectés sur 24 h qui ont servi au run (identique pour tous les résumés du run)
+        nb_articles_rss: {
+            type: DataTypes.INTEGER,
+            allowNull: true,
+        },
     }, {
         tableName: "resumes",
         timestamps: false,

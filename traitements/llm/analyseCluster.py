@@ -3,7 +3,7 @@ from traitements.config.prompts import ANALYSE_CLUSTERS_INSTRUCTION, ANALYSE_CLU
 from traitements.llm.client import appeler_chat
 from traitements.journal import log
 
-MODEL = "openai/gpt-5.4-nano"
+MODEL = "gpt-6-luna"
 EFFORTS = "low"
 
 def formater_clusters_yaml(clusters: dict[int, list[dict]]) -> str:

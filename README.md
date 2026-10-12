@@ -33,10 +33,9 @@ Phase 3 — Recherche vectorielle pgvector (RAG)
 NewsIA/
 ├── docker-compose.yml
 ├── .env
-├── db/
-│   └── init.sql
-├── litellm/
-│   └── config.yaml
+├── .env.example
+├── docs/
+│   └── api.md
 ├── api/
 │   ├── Dockerfile
 │   └── serveur.js
@@ -180,6 +179,7 @@ ce qui réduit le volume de scraping à ~25% des articles et accélère fortemen
 ### `llm/analyseCluster.py`
 
 Envoie les clusters à GPT pour sélection et génération de questions RAG.
+Modèle utilisé ici et dans `resumeFinal.py` : `gpt-6-luna` (alias déclaré dans `../commun/litellm/config.yaml`).
 Formate les titres par cluster en YAML avant envoi.
 
 **Entrée :** `dict[int, list[dict]]` — clusters de `hdbscan.py`
@@ -237,20 +237,13 @@ Enregistre le cluster et ses liaisons articles avant chaque appel GPT.
 
 | Variable            | Description                                                                               |
 | ------------------- | ----------------------------------------------------------------------------------------- |
-| `POSTGRES_DB`       | Nom de la base principale (articles/clusters/résumés)                                     |
-| `POSTGRES_USER`     | Rôle Postgres                                                                             |
-| `POSTGRES_PASSWORD` | Mot de passe Postgres                                                                     |
-| `BDD_URL`           | URL de connexion complète vers `POSTGRES_DB` (host = `db`)                                |
-| `DATABASE_URL`      | URL de connexion de LiteLLM vers sa propre base (host = `db`)                             |
-| `LITELLM_PROXY_URL` | URL du proxy LiteLLM (embeddings + LLM), interne au réseau Docker : `http://litellm:4000` |
-| `LITELLM_API_KEY`   | Clé API du proxy LiteLLM (`master_key` défini dans son config.yaml)                       |
-| `VOYAGE_API_KEY`    | Clé API Voyage, utilisée par LiteLLM pour les embeddings                                  |
-| `OPENAI_API_KEY`    | Clé API OpenAI, utilisée par LiteLLM                                                      |
-| `GROK_API_KEY`      | Clé API xAI/Grok, utilisée par LiteLLM                                                    |
-| `GROQ_API_KEY`      | Clé API Groq, utilisée par LiteLLM                                                        |
+| `BDD_URL`           | URL de connexion vers la base `projets` du Postgres commun (host = `postgres`)            |
+| `LITELLM_PROXY_URL` | URL du proxy LiteLLM commun, via le réseau Docker `commun` : `http://litellm:4000`        |
+| `LITELLM_API_KEY`   | Clé API du proxy LiteLLM (`master_key` de `../commun/litellm/config.yaml`)                |
+| `PORT_EXPRESS`      | Port d'écoute de l'API (`8100`)                                                           |
 
-`BDD_URL` et `DATABASE_URL` doivent toujours utiliser `db` comme host (le nom du service Postgres
-dans `docker-compose.yml`), jamais `localhost` ni le nom d'une base de données.
+`BDD_URL` doit toujours utiliser `postgres` comme host (le nom du service dans `../commun/docker-compose.yml`),
+jamais `localhost` ni une IP. Les variables de Postgres et les clés OpenAI / Voyage sont dans `../commun/.env`.
 
 ---
 
@@ -299,6 +292,7 @@ Clé primaire composite `(cluster_id, article_id)`. Cascade sur suppression du c
 | `resume`        | `TEXT`    | Résumé généré par GPT    |
 | `cluster_id_fk` | `INTEGER` | FK → `clusters(id)`      |
 | `prix`          | `DOUBLE PRECISION` | Coût en dollars des appels GPT du résumé (voir plus bas) |
+| `nb_articles_rss` | `INTEGER` | Nombre d'articles RSS collectés sur 24 h ayant servi au run (même valeur pour tous les résumés du run) |
 
 `prix` vient de l'en-tête `x-litellm-response-cost` renvoyé par LiteLLM. Il contient l'appel GPT de rédaction
 plus une part égale de l'appel GPT de choix des clusters, si bien que la somme des `prix` d'une journée donne
@@ -306,7 +300,37 @@ son coût GPT réel. Les embeddings Voyage ne sont pas comptés (quota gratuit),
 un coût dans ses propres statistiques. La colonne a été ajoutée le 04/10/2026 (`ALTER TABLE resumes ADD COLUMN prix
 double precision`) ; les résumés antérieurs ont `prix = NULL`.
 
-L'API renvoie ce champ : `GET /resumes/:date` → `[{ titre, resume, prix, sources }]`.
+`nb_articles_rss` a été ajoutée le 07/10/2026 (`ALTER TABLE resumes ADD COLUMN nb_articles_rss integer`). Elle est
+enregistrée pendant le traitement car les articles non retenus sont supprimés à la fin du run.
+
+### Table `collectes`
+
+Une ligne par passage de `collecte.py` (toutes les 3 h). Contrairement à `articles`, elle n'est jamais nettoyée :
+c'est elle qui permet de savoir combien d'articles ont été récupérés au fil d'une journée.
+
+| Colonne            | Type        | Description |
+| ------------------ | ----------- | ----------- |
+| `id`               | `SERIAL`    | Clé primaire |
+| `date_collecte`    | `TIMESTAMP` | Heure de la collecte (UTC), index btree |
+| `nb_articles_flux` | `INTEGER`   | Articles du jour renvoyés par les flux à ce passage (doublons d'un passage à l'autre compris) |
+| `nb_nouveaux`      | `INTEGER`   | Articles réellement ajoutés en base à ce passage |
+
+Créée le 08/10/2026 :
+
+```sql
+CREATE TABLE collectes (
+    id SERIAL PRIMARY KEY,
+    date_collecte TIMESTAMP NOT NULL DEFAULT now(),
+    nb_articles_flux INTEGER NOT NULL,
+    nb_nouveaux INTEGER NOT NULL
+);
+CREATE INDEX collectes_date_collecte_idx ON collectes (date_collecte);
+```
+
+L'API expose ce suivi : `GET /collectes/:date` (détail dans [`docs/api.md`](docs/api.md)).
+
+L'API renvoie ces deux champs : `GET /resumes/:date` → `{ date, nbArticlesRecuperes, resumes: [{ titre, resume, prix, sources }] }`.
+Détail de la réponse : [`docs/api.md`](docs/api.md).
 
 ---
 
@@ -323,20 +347,21 @@ WHERE ca.cluster_id = $1
 
 ## Déploiement Docker
 
-Le projet tourne en 4 conteneurs, orchestrés par `docker-compose.yml` à la racine du projet.
+Le projet a 2 conteneurs, orchestrés par `docker-compose.yml` à la racine du projet. Postgres et LiteLLM
+sont des ressources partagées entre projets, dans `../commun` (voir son `README.md`) : il faut les démarrer
+avant NewsIA.
 
 | Conteneur          | Rôle                                                                     | Port(s)                        |
 | ------------------ | ------------------------------------------------------------------------ | ------------------------------ |
-| `news-db`          | PostgreSQL 17 + extension `pgvector`                                     | `5432`                         |
-| `news-litellm`     | Proxy LiteLLM (embeddings Voyage + LLM OpenAI/Grok/Groq)                 | `4000`                         |
+| `commun-postgres`  | PostgreSQL 17 + `pgvector` (dans `../commun`), base `projets`            | `5432`                         |
+| `commun-litellm`   | Proxy LiteLLM (dans `../commun`) : `gpt-6-luna` et embeddings Voyage     | `4000`                         |
 | `news-api`         | API Node.js (`serveur.js`), lit les données pour le front                | `8100`                         |
 | `news-traitements` | Cron (Python + Playwright + xvfb) qui exécute `collecte.py` et `main.py` | _(aucun, pas de serveur HTTP)_ |
 
 Chaque service est construit à partir de son propre `Dockerfile` (`api/Dockerfile`,
-`traitements/Dockerfile`) ; `db` et `litellm` utilisent des images officielles.
-Les 4 conteneurs communiquent entre eux via le réseau Docker interne créé par
-`docker-compose.yml`, en utilisant leur **nom de service** comme host (`db`, `litellm`), jamais
-`localhost` ni une IP.
+`traitements/Dockerfile`). `api` et `traitements` rejoignent le réseau Docker externe `commun`, créé par
+`../commun/docker-compose.yml`, et joignent Postgres et LiteLLM par leur nom de service (`postgres`,
+`litellm`), jamais `localhost` ni une IP.
 
 ### Cron intégré au conteneur `traitements`
 
@@ -347,6 +372,11 @@ planification (`traitements/crontab`, fuseau `Europe/Paris`) :
 | ---------------------------------------------------------------------- | ------------------------------------------------ |
 | `00:01`, `03:01`, `06:01`, `09:01`, `12:01`, `15:01`, `18:01`, `21:01` | `xvfb-run -a python -m traitements.rss.collecte` |
 | `23:50`                                                                | `python -m traitements.main`                     |
+
+Mémoire : le conteneur est limité à 1 Go. Le pic vient des téléchargements Playwright de `main.py` ;
+`rss.py` n'ouvre qu'un Chromium à la fois, le referme après chaque page et bloque images, vidéos et polices.
+Ne pas augmenter le nombre de navigateurs simultanés sans remesurer : 5 Chromium ouverts en parallèle
+ont fait tuer le traitement par l'OOM killer les 07/10 et 08/10/2026.
 
 Les logs des jobs sont redirigés vers `/var/log/cron.log` dans le conteneur, et remontent dans
 `docker logs news-traitements` grâce à l'entrypoint (`tail -f`).
@@ -359,20 +389,20 @@ résumé avec son coût, total de la journée). Les étapes détaillées du scra
 ### Démarrer / arrêter le stack
 
 ```bash
+# Prérequis : les ressources communes tournent (cd ../commun && docker compose up -d)
 # Depuis la racine du projet (là où se trouve docker-compose.yml)
-docker compose up -d --build      # démarre tout, en arrière-plan
-docker compose ps                 # état des 4 conteneurs
-docker compose down                # arrête tout (garde les données)
-docker compose down -v            # arrête tout ET supprime le volume Postgres (⚠️ perte de données)
+docker compose up -d --build      # démarre api et traitements, en arrière-plan
+docker compose ps                 # état des 2 conteneurs
+docker compose down               # arrête NewsIA (la base, dans ../commun, n'est pas touchée)
 ```
 
 ### Suivre les logs
 
 ```bash
 docker logs -f news-traitements   # cron + sorties de collecte.py / main.py
-docker logs -f news-litellm       # proxy LiteLLM
 docker logs -f news-api           # API Node.js
-docker logs -f news-db            # Postgres
+docker logs -f commun-litellm     # proxy LiteLLM
+docker logs -f commun-postgres    # Postgres
 ```
 
 ### Lancer une tâche à la main (sans attendre le cron)
@@ -409,7 +439,7 @@ _(pas besoin de `xvfb-run` ici : `main.py` ne fait pas de scraping Playwright, c
 
 ```bash
 docker exec -it news-traitements bash
-docker exec -it news-db psql -U $POSTGRES_USER -d $POSTGRES_DB
+docker exec -it commun-postgres psql -U <user> -d projets
 ```
 
 ### Reconstruire après une modification du code

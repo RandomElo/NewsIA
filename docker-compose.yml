@@ -1,38 +1,8 @@
+# Postgres et LiteLLM sont des ressources partagées, définies dans ../commun/docker-compose.yml.
+# Les démarrer avant ce projet : cd ../commun && docker compose up -d
+# Ici, les services les joignent via le réseau externe "commun" (hosts : postgres, litellm).
+
 services:
-
-  db:
-    image: pgvector/pgvector:pg17
-    container_name: news-db
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - db_data:/var/lib/postgresql/data
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    ports:
-      - "5432:5432"
-    restart: unless-stopped
-    mem_limit: 300m
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  litellm:
-    image: ghcr.io/berriai/litellm:main-latest
-    container_name: news-litellm
-    volumes:
-      - ./litellm/config.yaml:/app/config.yaml:ro
-    command: ["--config", "/app/config.yaml", "--port", "4000"]
-    env_file: .env
-    ports:
-      - "4000:4000"
-    restart: unless-stopped
-    # 400m ne suffisait pas : LiteLLM a été tué par l'OOM killer pendant l'appel
-    # "choix des clusters" (gros prompt de ~750 titres) le 03/10 à 23:50
-    mem_limit: 700m
 
   api:
     build:
@@ -42,11 +12,9 @@ services:
     env_file: .env
     ports:
       - "8100:8100"
-    depends_on:
-      db:
-        condition: service_healthy
-      litellm:
-        condition: service_started
+    networks:
+      - default
+      - commun
     restart: unless-stopped
     mem_limit: 250m
 
@@ -56,16 +24,18 @@ services:
       dockerfile: traitements/Dockerfile
     container_name: news-traitements
     env_file: .env
-    depends_on:
-      db:
-        condition: service_healthy
-      litellm:
-        condition: service_started
+    networks:
+      - default
+      - commun
     restart: unless-stopped
     # Pas de volume sur storage/browser-profile : le profil Chromium ne doit
     # persister que pendant la vie du conteneur, pas au-delà (cf. demande).
     shm_size: "512mb"   # Chromium a besoin de plus de /dev/shm que le défaut Docker
-    mem_limit: 700m     # marge pour le pic Chromium pendant les runs cron
+    # 700m ne suffisait pas : traitement de 23h50 tué par l'OOM killer les 07/10 et 08/10
+    # pendant les téléchargements Playwright. Chromium est maintenant limité à 1 instance
+    # (rss.py), cette limite garde de la marge pour le pic.
+    mem_limit: 1g
 
-volumes:
-  db_data:
+networks:
+  commun:
+    external: true

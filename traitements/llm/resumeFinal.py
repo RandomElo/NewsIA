@@ -4,7 +4,7 @@ from traitements.bdd.enregistrementCluster import enregistrer_cluster
 from traitements.llm.client import appeler_chat
 from traitements.journal import log
 
-MODEL = "openai/gpt-5.4-nano"
+MODEL = "gpt-6-luna"
 EFFORTS = "low"
 
 SCORE_MIN = 0.5  # seuil sous lequel un article est jugé hors-sujet pour ce cluster
@@ -86,12 +86,14 @@ Articles :
     }
 
 
-def resumer_tous_les_clusters(rag_resultats: list[dict], cout_analyse: float = 0) -> list[dict]:
+def resumer_tous_les_clusters(rag_resultats: list[dict], cout_analyse: float = 0,
+                              nb_articles_rss: int | None = None) -> list[dict]:
     """
     Prend tous les résultats RAG et génère un résumé pour chaque cluster.
     Retourne la liste dans l'ordre d'importance (celui du RAG).
     cout_analyse : coût de l'appel GPT de choix des clusters, réparti à parts égales
     sur les résumés pour que la somme des prix corresponde au coût réel de la journée.
+    nb_articles_rss : nombre d'articles RSS collectés qui ont servi au run, recopié sur chaque résumé.
     """
     resultats = []
     for cluster_rag in rag_resultats:
@@ -106,6 +108,7 @@ def resumer_tous_les_clusters(rag_resultats: list[dict], cout_analyse: float = 0
 
     for resume in resultats:
         resume["prix"] += cout_analyse / len(resultats)
+        resume["nb_articles_rss"] = nb_articles_rss
 
     enregistrement_resumes(resultats)
     return resultats
