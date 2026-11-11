@@ -21,7 +21,8 @@ Règles strictes :
 5. Pas de mise en forme (pas de titres, pas de bullets, pas de markdown).
 6. Reste factuel, pas d'opinion personnelle.
 7. Si les articles se contredisent, mentionne les deux versions.
-8. Si les articles couvrent en réalité deux sujets distincts et clairement séparés (par exemple deux actualités technologiques différentes réunies sous le même thème), ne les mélange jamais dans un même paragraphe : traite chaque sujet dans son propre paragraphe, séparé par un saut de ligne (double retour à la ligne). N'ajoute pas de titre ou de label avant chaque paragraphe, seulement le saut de ligne."""
+8. Si les articles couvrent en réalité deux sujets distincts et clairement séparés (par exemple deux actualités technologiques différentes réunies sous le même thème), ne les mélange jamais dans un même paragraphe : traite chaque sujet dans son propre paragraphe, séparé par un saut de ligne (double retour à la ligne). N'ajoute pas de titre ou de label avant chaque paragraphe, seulement le saut de ligne.
+9. Si un « Résumé déjà publié » est fourni, le lecteur l'a déjà lu. Avant d'écrire, repère dans les articles ce qui n'y figure pas encore : nouveaux faits, chiffres, décisions, déclarations, réactions. Le résumé ne parle que de cela. N'y remets aucun fait, chiffre ou citation déjà présent dans le résumé publié, sauf s'il a changé (dans ce cas, donne la nouvelle valeur). Une seule phrase de rappel du contexte est permise, la première. Dans ce cas, la règle 2 ne s'applique pas : la longueur suit la quantité de nouveau, de 40 mots si presque rien n'a changé à 180 mots au plus. Ne remplis jamais avec des faits déjà publiés."""
 
 
 def formater_contexte(articles: list[dict]) -> str:
@@ -37,8 +38,9 @@ def formater_contexte(articles: list[dict]) -> str:
 
 def resumer_cluster(cluster_rag: dict) -> dict | None:
     """
-    Prend un cluster RAG { cluster_id, titre, questions, articles }
+    Prend un cluster RAG { cluster_id, titre, questions, articles, resume_precedent (optionnel) }
     et retourne { cluster_id, titre, resume, cluster_id_fk, prix }.
+    resume_precedent : texte du résumé déjà publié sur ce sujet, pour n'écrire que la suite.
     prix : coût en dollars de l'appel GPT qui a rédigé le résumé.
     """
     cluster_id = cluster_rag["cluster_id"]
@@ -60,6 +62,11 @@ def resumer_cluster(cluster_rag: dict) -> dict | None:
 
 Articles :
 {contexte}"""
+    if cluster_rag.get("resume_precedent"):
+        prompt_user = f"""Résumé déjà publié sur ce sujet :
+{cluster_rag["resume_precedent"]}
+
+{prompt_user}"""
 
     resume, cout = appeler_chat({
         "model": MODEL,

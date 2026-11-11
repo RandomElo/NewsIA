@@ -71,10 +71,33 @@ class ErreurPaywall(Exception):
 # ── ZoneBourse : article principal de la page d'accueil ──────────────────────
 ZONEBOURSE_URL                     = "https://www.zonebourse.com/"
 _SELECTEUR_COOKIE_ZB               = "#didomi-notice-agree-button"
-_SELECTEUR_ARTICLE_PRINCIPAL_ZB    = ".c-12.cm-8.mb-m-15.pos-1.pos-m-2"
-_SELECTEUR_TITRE_UNE_ZB            = ".txt-s8.px-15.mt-15.txt-align-center.my-0"
+
+# La une est repérée par sa taille, pas par ses classes CSS : ZoneBourse renomme les classes
+# de sa grille (c-12 cm-8 mb-m-15 pos-1 pos-m-2 jusqu'au 13/10, puis c-12 cxs-6 cs-8 mb-s-15
+# pos-1 pos-s-2), ce qui cassait la collecte sans erreur. Parmi les liens d'articles visibles
+# en haut de la page, la une est celle qui occupe la plus grande surface.
+_JS_LIEN_UNE_ZB = """() => {
+    const candidats = [];
+    for (const a of document.querySelectorAll("a[href*='/actualite-bourse/']")) {
+        const r = a.getBoundingClientRect();
+        if (r.width < 50 || r.height < 50 || r.top > 2000) continue;
+        candidats.push({ href: a.href, texte: a.innerText.trim(), surface: r.width * r.height });
+    }
+    candidats.sort((x, y) => y.surface - x.surface);
+    return candidats[0] || null;
+}"""
 
 _PROFIL_ZB = Path("./storage/browser-profile")
+
+
+def _titre_article_zonebourse(html: str) -> Optional[str]:
+    """Titre de la page article : balise og:title, sinon premier <h1>."""
+    soup = BeautifulSoup(html, "html.parser")
+    meta = soup.find("meta", property="og:title")
+    if meta and meta.get("content", "").strip():
+        return meta["content"].strip()
+    h1 = soup.find("h1")
+    return h1.get_text(" ", strip=True) if h1 else None
 
 
 def _date_publication_zonebourse(html: str) -> Optional[datetime]:
@@ -216,42 +239,34 @@ def _recuperer_article_principal_zonebourse() -> Optional[dict]:
                 except Exception:
                     log.debug("[*] ZoneBourse — aucune bannière cookie détectée")
 
-                # 3. Détection de l'article principal
+                # 3. Détection de l'article principal (le plus grand lien d'article)
+                # Attente sur le calcul lui-même : le premier lien d'article du DOM est
+                # un lien de menu caché, une attente « visible » sur le sélecteur échouerait
+                une = None
                 try:
-                    main_article = page.wait_for_selector(
-                        _SELECTEUR_ARTICLE_PRINCIPAL_ZB, timeout=15_000
-                    )
+                    une = page.wait_for_function(_JS_LIEN_UNE_ZB, timeout=15_000).json_value()
                 except Exception:
+                    pass
+                if not une:
                     log.warning("[!] ZoneBourse — article principal introuvable")
                     return None
 
-                if not main_article:
-                    log.warning("[!] ZoneBourse — aucun article trouvé")
-                    return None
-
-                # Titre de secours pris sur le bloc de la home, au cas où le sélecteur
-                # dédié serait absent sur la page article
-                titre_fallback = main_article.inner_text().strip().split("\n")[0]
+                # Titre de secours pris sur la tuile de la home, si la page article n'en donne pas
+                titre_fallback = une["texte"].split("\n")[0].strip()
+                log.debug("[*] ZoneBourse — une : %s", une["href"])
 
                 # 4. Navigation vers la page d'article
-                main_article.click()
                 try:
-                    page.wait_for_load_state("domcontentloaded", timeout=20_000)
+                    page.goto(une["href"], wait_until="domcontentloaded", timeout=30_000)
                 except Exception:
-                    log.debug("[*] ZoneBourse — domcontentloaded non atteint après clic, on continue")
+                    log.debug("[*] ZoneBourse — domcontentloaded non atteint sur l'article, on continue")
 
                 # Petite pause pour laisser le temps au contenu de se stabiliser
                 page.wait_for_timeout(1_500)
 
-                # Titre "propre" pris sur la page d'article elle-même
-                try:
-                    titre_el = page.wait_for_selector(_SELECTEUR_TITRE_UNE_ZB, timeout=8_000)
-                    titre = titre_el.inner_text().strip() if titre_el else titre_fallback
-                except Exception:
-                    titre = titre_fallback
-
                 lien = page.url
                 html = page.content()
+                titre = _titre_article_zonebourse(html) or titre_fallback
             finally:
                 # Fermeture tant que Playwright tourne encore : sinon les handlers de
                 # page.route() sont coupés en plein vol (CancelledError / TargetClosedError)

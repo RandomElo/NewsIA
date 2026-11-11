@@ -1,5 +1,6 @@
 from traitements.bdd.connexion import get_connection
 from traitements.journal import log
+from traitements.periode import fin
 
 
 def enregistrement_resumes(resumes: list[dict]) -> None:
@@ -17,11 +18,11 @@ def enregistrement_resumes(resumes: list[dict]) -> None:
         for r in resumes:
             cursor.execute(
                 """
-                INSERT INTO resumes (cluster_id, titre, resume, cluster_id_fk, prix, nb_articles_rss)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO resumes (cluster_id, titre, resume, cluster_id_fk, prix, nb_articles_rss, date_resume)
+                VALUES (%s, %s, %s, %s, %s, %s, COALESCE(%s::timestamp, NOW()))
                 """,
                 (r["cluster_id"], r["titre"], r["resume"], r.get("cluster_id_fk"), r.get("prix"),
-                 r.get("nb_articles_rss")),
+                 r.get("nb_articles_rss"), fin()),
             )
         conn.commit()
     except Exception as e:

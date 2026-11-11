@@ -1,4 +1,5 @@
 from traitements.bdd.connexion import get_connection
+from traitements.periode import fin
 
 TOP_K = 10
 
@@ -14,10 +15,11 @@ def recuperer_articles_zonebourse_du_jour() -> list[dict]:
             SELECT id, titre, contenu, source, date_ajout
             FROM articles
             WHERE source LIKE 'ZoneBourse%%'
-            AND date_ajout >= NOW() - INTERVAL '24 hours'
+            AND date_ajout >= COALESCE(%s::timestamp, NOW()) - INTERVAL '24 hours'
+            AND date_ajout < COALESCE(%s::timestamp, NOW())
             AND contenu IS NOT NULL
             ORDER BY date_ajout ASC
-        """)
+        """, (fin(), fin()))
         colonnes = [desc[0] for desc in cursor.description]
         return [dict(zip(colonnes, row)) for row in cursor.fetchall()]
     finally:
@@ -33,10 +35,11 @@ def rechercher_articles_similaires(embedding: list[float], top_k: int = TOP_K) -
                    1 - (embedding <=> %s::vector) AS score
             FROM articles
             WHERE embedding IS NOT NULL
-              AND date_ajout >= NOW() - INTERVAL '24 hours'
+              AND date_ajout >= COALESCE(%s::timestamp, NOW()) - INTERVAL '24 hours'
+              AND date_ajout < COALESCE(%s::timestamp, NOW())
             ORDER BY embedding <=> %s::vector
             LIMIT %s
-        """, (embedding, embedding, top_k))
+        """, (embedding, fin(), fin(), embedding, top_k))
         colonnes = [desc[0] for desc in cursor.description]
         return [dict(zip(colonnes, row)) for row in cursor.fetchall()]
     finally:

@@ -23,7 +23,11 @@ services:
       context: .
       dockerfile: traitements/Dockerfile
     container_name: news-traitements
-    env_file: .env
+    env_file:
+      - .env
+      # Webhook Discord partagé avec le redémarrage hebdo du Pi (alerte si le traitement échoue)
+      - path: ../commun/scripts/.env.discord
+        required: false
     networks:
       - default
       - commun

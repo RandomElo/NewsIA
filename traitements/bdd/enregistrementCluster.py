@@ -1,5 +1,6 @@
 from traitements.bdd.connexion import get_connection
 from traitements.journal import log
+from traitements.periode import fin
 
 
 def enregistrer_cluster(topic_id: str, titre: str, articles: list[dict]) -> int | None:
@@ -19,8 +20,8 @@ def enregistrer_cluster(topic_id: str, titre: str, articles: list[dict]) -> int 
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "INSERT INTO clusters (topic_id, titre) VALUES (%s, %s) RETURNING id",
-            (topic_id, titre),
+            "INSERT INTO clusters (topic_id, titre, date_run) VALUES (%s, %s, COALESCE(%s::timestamp, NOW())) RETURNING id",
+            (topic_id, titre, fin()),
         )
         cluster_id = cursor.fetchone()[0]
 
