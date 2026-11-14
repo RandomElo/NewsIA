@@ -6,5 +6,9 @@ SHELL=/bin/bash
 1 0,3,6,9,12,15,18,21 * * * root cd /app && xvfb-run -a python -m traitements.rss.collecte >> /var/log/cron.log 2>&1
 
 # Traitement principal (clustering, résumés) du lundi au vendredi à 23h50 (pas de résumé
-# le samedi ni le dimanche). En cas d'échec, une alerte part sur Discord.
+# le samedi). En cas d'échec, une alerte part sur Discord.
 50 23 * * 1-5 root cd /app && python -m traitements.main >> /var/log/cron.log 2>&1 || python -m traitements.alerte "Le traitement de 23h50 a échoué, aucun résumé généré. Voir docker logs news-traitements." >> /var/log/cron.log 2>&1
+
+# Bilan de la semaine le dimanche à 23h50 : synthèse des résumés des 7 derniers jours
+# (ignoré s'il y a moins de 2 jours de résumés).
+50 23 * * 0 root cd /app && python -m traitements.hebdo >> /var/log/cron.log 2>&1 || python -m traitements.alerte "Le bilan de la semaine a échoué. Voir docker logs news-traitements." >> /var/log/cron.log 2>&1

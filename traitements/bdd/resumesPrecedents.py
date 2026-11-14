@@ -18,6 +18,7 @@ def recuperer_resumes_recents(jours: int = JOURS_HISTORIQUE) -> list[dict]:
             FROM resumes
             WHERE date_resume >= COALESCE(%s::timestamp, NOW()) - make_interval(days => %s)
               AND date_resume < COALESCE(%s::timestamp, NOW())
+              AND cluster_id <> 0  -- le bilan hebdo n'est pas un sujet à poursuivre
             ORDER BY date_resume DESC
         """, (fin(), jours, fin()))
         colonnes = [desc[0] for desc in cursor.description]
